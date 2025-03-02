@@ -349,7 +349,7 @@ EnsureGameWindowActive() {
 ; -----------------------------------------------------------------------------
 ; Ensures that the alchemy screen is open using the new FindImageOnScreen function.
 EnsureAlchemyScreenOpen(WinW, WinH) {
-    Local alchCheckPath, alchCheckX, alchCheckY, alchemyButtonPath, alchemyBtnX, alchemyBtnY, alchemyBtnWidth, alchemyBtnHeight, alchemyBtnCenterX, alchemyBtnCenterY
+    Local alchCheckPath, alchCheckX, alchCheckY, alchemyButtonPath, alchemyBtnX, alchemyBtnY, alchemyBtnWidth, alchemyBtnHeight
     
     alchCheckPath := A_ScriptDir . "\alch_check.png"
     if (!FileExist(alchCheckPath)) {
@@ -390,10 +390,9 @@ EnsureAlchemyScreenOpen(WinW, WinH) {
         return false
     }
     
-    alchemyBtnCenterX := alchemyBtnX + (alchemyBtnWidth / 2)
-    alchemyBtnCenterY := alchemyBtnY + (alchemyBtnHeight / 2)
+
     LogAction("Opening Alchemy page")
-    MouseClick("left", alchemyBtnCenterX, alchemyBtnCenterY)
+    MouseClick("left", alchemyBtnX, alchemyBtnY)
     Sleep(1500)
     
     ; Verify alchemy screen is now open
@@ -550,8 +549,7 @@ ResizeGameWindow() {
 ProcessSpecificIcon(setNum, pageNum, iconNum) {
     global capturedPositions, buttonImageFile, windowWidth, windowHeight, batchProcessingActive
     Local WinX, WinY, WinW, WinH, downArrowKey, upArrowKey, downArrowX, downArrowY, upArrowX, upArrowY
-    Local iconKey, iconX, iconY, buttonFile, buttonX, buttonY, buttonWidth, buttonHeight, buttonCenterX, buttonCenterY
-    Local buttonVariants, variantFile, found
+    Local iconKey, iconX, iconY, buttonFile, buttonX, buttonY, buttonWidth, buttonHeight
 
     ; Ensure window is active and sized
     EnsureGameWindowActive()
@@ -645,11 +643,9 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
         if (FindImageOnScreen(buttonFile, &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
                              "", [20, 40, 60, 80, 100, 120, 150], true, debugPrefix)) {
             
-            buttonCenterX := buttonX + (buttonWidth / 2)
-            buttonCenterY := buttonY + (buttonHeight / 2)
             
-            LogAction("Found upgrade button at: " . buttonX . ", " . buttonY . " - Clicking center: " . buttonCenterX . ", " . buttonCenterY)
-            MouseClick("left", buttonCenterX, buttonCenterY)
+            LogAction("Found upgrade button at: " . buttonX . ", " . buttonY )
+            MouseClick("left", buttonX, buttonY)
             Sleep(1000)
             found := true
             break
@@ -667,33 +663,14 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
         if (FindImageOnScreen(buttonVariants[1], &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
                              searchRegion, [40, 80, 120, 160, 200], true, debugPrefix . "_region")) {
             
-            buttonCenterX := buttonX + (buttonWidth / 2)
-            buttonCenterY := buttonY + (buttonHeight / 2)
             
-            LogAction("Found upgrade button in region at: " . buttonX . ", " . buttonY . " - Clicking center: " . buttonCenterX . ", " . buttonCenterY)
-            MouseClick("left", buttonCenterX, buttonCenterY)
+            LogAction("Found upgrade button in region at: " . buttonX . ", " . buttonY)
+            MouseClick("left", buttonX, buttonY)
             Sleep(1000)
             found := true
         }
     }
     
-    if (!found) {
-        ; Final fallback - click a consistent relative position where the button is expected to be
-        LogAction("Image search failed, trying fallback position")
-        
-        ; Calculate fallback position - typically bottom center area
-        buttonFallbackX := WinW * 0.5
-        buttonFallbackY := WinH * 0.75
-        
-        LogAction("Using fallback position: " . buttonFallbackX . ", " . buttonFallbackY)
-        MouseClick("left", buttonFallbackX, buttonFallbackY)
-        Sleep(1000)
-        
-        ; Don't show dialog in batch mode to avoid interrupting the process
-        if (!batchProcessingActive) {
-            MsgBox("Warning: Used fallback click position as upgrade button was not found.", "Image Recognition Warning")
-        }
-    }
     
     ; Try to click the icon again to close the upgrade dialog
     LogAction("Clicking icon again at position: " . iconX . ", " . iconY)
@@ -1273,34 +1250,15 @@ StopBatchProcessing() {
 }
 
 
-; -----------------------------------------------------------------------------
-; Helper function to verify an image match at a specific location
-VerifyImageMatch(imagePath, foundX, foundY, searchRegion := "", tolerance := 40) {
-    Local verifyX, verifyY
-    
-    try {
-        if ImageSearch(&verifyX, &verifyY, foundX - 5, foundY - 5, foundX + 5, foundY + 5, "*" . tolerance . " " . imagePath) {
-            return true
-        }
-    } catch {
-        ; If verification fails, return false
-        return false
-    }
-    
-    return false
-}
-
-; This function replaces the TryGdipImageSearch function that was causing issues
-; It uses ShinsImageScanClass for more reliable image detection
 
 FindImageOnScreen(imagePath, &imageX, &imageY, &width := 0, &height := 0, searchRegion := "", 
                   toleranceValues := [20, 40, 60, 80, 100, 120, 150], 
                   saveDebugScreenshot := false, debugPrefix := "debug", matchThreshold := 70) {
     
-    ; Initialize the scanner for the entire desktop
+    ; Initialize the scanner for the game window
     static scanner := ""
     if (scanner = "") {
-        scanner := ShinsImageScanClass()
+        scanner := ShinsImageScanClass("ahk_exe LegendsOfIdleon.exe", 1) ; 1 = UseClientArea
     }
     
     ; Check if image file exists
@@ -1309,61 +1267,36 @@ FindImageOnScreen(imagePath, &imageX, &imageY, &width := 0, &height := 0, search
         return false
     }
     
-    ; Get image dimensions if requested
-    if (&width != 0 && &height != 0) {
-        scanner.GetImageDimensions(imagePath, &width, &height)
+    ; Ensure the game window exists
+    if (!WinExist("ahk_exe LegendsOfIdleon.exe")) {
+        LogAction("Game window not found")
+        return false
     }
+    
     
     LogAction("Searching for image: " . imagePath)
     
-    ; Parse search region if provided
-    if (searchRegion != "") {
-        searchParams := StrSplit(searchRegion, "|")
-        if (searchParams.Length >= 4) {
-            searchX := searchParams[1]
-            searchY := searchParams[2]
-            searchW := searchParams[3]
-            searchH := searchParams[4]
-            
-            ; Try with different tolerance values
-            for _, variance in toleranceValues {
-                LogAction("Trying image search with variance: " . variance)
-                if (scanner.ImageRegion(imagePath, searchX, searchY, searchW, searchH, variance, &imageX, &imageY, 0)) {
-                    LogAction("Found image with variance " . variance . " at " . imageX . ", " . imageY)
-                    return true
-                }
-            }
-        } else {
-            ; If region format is incorrect, fall back to full screen search
-            for _, variance in toleranceValues {
-                LogAction("Trying full screen image search with variance: " . variance)
-                if (scanner.Image(imagePath, variance, &imageX, &imageY, 0)) {
-                    LogAction("Found image with variance " . variance . " at " . imageX . ", " . imageY)
-                    return true
-                }
-            }
-        }
-    } else {
-        ; Full screen search
-        for _, variance in toleranceValues {
-            LogAction("Trying full screen image search with variance: " . variance)
-            if (scanner.Image(imagePath, variance, &imageX, &imageY, 0)) {
-                LogAction("Found image with variance " . variance . " at " . imageX . ", " . imageY)
-                return true
-            }
+    ; Search the entire window
+    for _, variance in toleranceValues {
+        LogAction("Trying full image search with variance: " . variance)
+        if (scanner.Image(imagePath, variance, &imageX, &imageY, 1, "LRBT")) {
+            LogAction("Found image with variance " . variance . " at position: " . imageX . ", " . imageY)
+            return true
         }
     }
+    
     
     ; If image not found and debug screenshot requested
     if (saveDebugScreenshot) {
         debugScreenshot := A_ScriptDir . "\" . debugPrefix . "_screenshot_" . FormatTime(, "yyyyMMdd_HHmmss") . ".png"
         scanner.SaveImage(debugScreenshot)
-        LogAction("Image not found. Debug screenshot saved to: " . debugScreenshot)
+        LogAction("Game window screenshot saved to: " . debugScreenshot)
         
         ; Save the template image with suffix for comparison
         FileCopy(imagePath, A_ScriptDir . "\" . debugPrefix . "_template_" . FormatTime(, "yyyyMMdd_HHmmss") . ".png", 1)
     }
     
+    LogAction("Image not found: " . imagePath)
     return false
 }
 

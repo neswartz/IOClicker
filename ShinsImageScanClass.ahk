@@ -820,7 +820,7 @@ class ShinsImageScanClass {
 			}
 		DllCall("Gdiplus\GdipBitmapUnlockBits", "Ptr", bm, "Ptr", bmdata)
 		DllCall("gdiplus\GdipDisposeImage", "ptr", bm)
-		this.ImageCache[image] := p
+		this.imageCache[image] := p
 		return 1
 	}
 	Update(x:=0,y:=0,w:=0,h:=0,applyOffset:=1) {
