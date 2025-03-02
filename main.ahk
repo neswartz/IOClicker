@@ -348,8 +348,11 @@ EnsureGameWindowActive() {
 
 ; -----------------------------------------------------------------------------
 ; Ensures that the alchemy screen is open using the new FindImageOnScreen function.
+; -----------------------------------------------------------------------------
+; Ensures that the alchemy screen is open using coordinates from the INI file
 EnsureAlchemyScreenOpen(WinW, WinH) {
-    Local alchCheckPath, alchCheckX, alchCheckY, alchemyButtonPath, alchemyBtnX, alchemyBtnY, alchemyBtnWidth, alchemyBtnHeight
+    global capturedPositions
+    Local alchCheckPath, alchCheckX, alchCheckY, alchemyBtnX, alchemyBtnY
     
     alchCheckPath := A_ScriptDir . "\alch_check.png"
     if (!FileExist(alchCheckPath)) {
@@ -358,7 +361,7 @@ EnsureAlchemyScreenOpen(WinW, WinH) {
         return false
     }
     
-    ; Check if alchemy screen is already open using the new function
+    ; Check if alchemy screen is already open using the image check
     if (FindImageOnScreen(alchCheckPath, &alchCheckX, &alchCheckY)) {
         LogAction("Alchemy window already open")
         return true  ; Alchemy screen is already open
@@ -376,32 +379,28 @@ EnsureAlchemyScreenOpen(WinW, WinH) {
     Send("c")
     Sleep(1500)
     
-    alchemyButtonPath := A_ScriptDir . "\alchemy_button.png"
-    if (!FileExist(alchemyButtonPath)) {
-        LogAction("alchemy_button.png not found at: " . alchemyButtonPath)
-        MsgBox("Alchemy button image file not found! Aborting.")
-        return false
-    }
-    
-    ; Find the alchemy button using the new function
-    if (!FindImageOnScreen(alchemyButtonPath, &alchemyBtnX, &alchemyBtnY, &alchemyBtnWidth, &alchemyBtnHeight, "", , true, "alchemy_btn")) {
-        LogAction("Alchemy button not found. Cannot open alchemy screen.")
-        MsgBox("Alchemy button not found. Aborting.")
-        return false
-    }
-    
-
-    LogAction("Opening Alchemy page")
-    MouseClick("left", alchemyBtnX, alchemyBtnY)
-    Sleep(1500)
-    
-    ; Verify alchemy screen is now open
-    if (FindImageOnScreen(alchCheckPath, &alchCheckX, &alchCheckY)) {
-        LogAction("Alchemy screen successfully opened.")
-        return true
+    ; Check if we have the alchemy button coordinates in the INI file
+    if (capturedPositions.Has("AlchemyButton")) {
+        alchemyBtnX := capturedPositions["AlchemyButton"]["X"]
+        alchemyBtnY := capturedPositions["AlchemyButton"]["Y"]
+        LogAction("Using coordinates from INI for alchemy button: " . alchemyBtnX . ", " . alchemyBtnY)
+        
+        ; Click on the coordinates from the INI file
+        MouseClick("left", alchemyBtnX, alchemyBtnY)
+        Sleep(1500)
+        
+        ; Verify alchemy screen is now open
+        if (FindImageOnScreen(alchCheckPath, &alchCheckX, &alchCheckY)) {
+            LogAction("Alchemy screen successfully opened.")
+            return true
+        } else {
+            LogAction("Failed to open alchemy screen with coordinates from INI.")
+            MsgBox("Failed to open alchemy screen with the saved coordinates. You may need to recapture the alchemy button position.")
+            return false
+        }
     } else {
-        LogAction("Failed to open alchemy screen after clicking alchemy button.")
-        MsgBox("Failed to open alchemy screen. Ensure the alchemy button is visible.")
+        LogAction("Alchemy button coordinates not found in the INI file.")
+        MsgBox("Alchemy button position not found in the INI file. Please use the position finder to capture the alchemy button coordinates.", "Missing Coordinates")
         return false
     }
 }
@@ -549,7 +548,7 @@ ResizeGameWindow() {
 ProcessSpecificIcon(setNum, pageNum, iconNum) {
     global capturedPositions, buttonImageFile, windowWidth, windowHeight, batchProcessingActive
     Local WinX, WinY, WinW, WinH, downArrowKey, upArrowKey, downArrowX, downArrowY, upArrowX, upArrowY
-    Local iconKey, iconX, iconY, buttonFile, buttonX, buttonY, buttonWidth, buttonHeight
+    Local iconKey, iconX, iconY, buttonX, buttonY, buttonWidth, buttonHeight
 
     ; Ensure window is active and sized
     EnsureGameWindowActive()
@@ -620,56 +619,22 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
     ; Click the upgrade button using our enhanced image recognition
     ; First, check if we have brightness variants of the button image
     found := false
-    buttonBaseName := SubStr(buttonImageFile, 1, InStr(buttonImageFile, ".", , , 1) - 1)
-    buttonVariants := []
     
-    ; Add the original image first
-    buttonVariants.Push(A_ScriptDir . "\" . buttonImageFile)
     
-    ; Add any brightness variants if they exist
-    brightnessLevels := [-30, -15, 0, 15, 30]
-    for _, brightness in brightnessLevels {
-        variantFile := A_ScriptDir . "\" . buttonBaseName . "_bright" . brightness . ".png"
-        if (FileExist(variantFile))
-            buttonVariants.Push(variantFile)
+    LogAction("Trying button image: " . buttonImageFile)
+    
+    ; Use the enhanced image search
+    debugPrefix := "debug_" . setNum . "_" . pageNum . "_" . iconNum
+    if (FindImageOnScreen(buttonImageFile, &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
+                            "", [20, 40, 60, 80, 100, 120, 150], true, debugPrefix)) {
+        
+        
+        LogAction("Found upgrade button at: " . buttonX . ", " . buttonY )
+        MouseClick("left", buttonX, buttonY)
+        Sleep(1000)
+        found := true
     }
     
-    ; Try each button image variant
-    for _, buttonFile in buttonVariants {
-        LogAction("Trying button image: " . buttonFile)
-        
-        ; Use the enhanced image search
-        debugPrefix := "debug_" . setNum . "_" . pageNum . "_" . iconNum
-        if (FindImageOnScreen(buttonFile, &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
-                             "", [20, 40, 60, 80, 100, 120, 150], true, debugPrefix)) {
-            
-            
-            LogAction("Found upgrade button at: " . buttonX . ", " . buttonY )
-            MouseClick("left", buttonX, buttonY)
-            Sleep(1000)
-            found := true
-            break
-        }
-    }
-    
-    if (!found) {
-        ; If no variant matched, try a more general approach - look for the button in a specific region
-        LogAction("Standard search failed, trying region-based search")
-        
-        ; Define a search region based on game UI expectations - this is approximate
-        ; Typically the upgrade button appears in the lower part of the window
-        searchRegion := (WinW * 0.3) . "|" . (WinH * 0.6) . "|" . (WinW * 0.4) . "|" . (WinH * 0.3)
-        
-        if (FindImageOnScreen(buttonVariants[1], &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
-                             searchRegion, [40, 80, 120, 160, 200], true, debugPrefix . "_region")) {
-            
-            
-            LogAction("Found upgrade button in region at: " . buttonX . ", " . buttonY)
-            MouseClick("left", buttonX, buttonY)
-            Sleep(1000)
-            found := true
-        }
-    }
     
     
     ; Try to click the icon again to close the upgrade dialog
@@ -928,7 +893,7 @@ global waitTimeBetweenCycles := 5  ; in minutes
 global currentIconIndex := 1
 global currentRepetition := 1
 global scriptVersion := "1.0.0"  ; Current version of your script
-global githubRepo := "neswartz/IdleOn"  ; Your GitHub repo
+global githubRepo := "neswartz/IOClicker"  ; Your GitHub repo
 global updateCheckIntervalDays := 1  
 
 ; ===== INITIALIZATION =====
@@ -1006,7 +971,7 @@ XButton2::  ; Mouse5 to capture current position
 ; Add this hotkey for manual update checking
 ^+u::  ; This would replace your current Ctrl+Shift+U hotkey
 {
-    ;CheckForUpdates(true)  ; Force check
+    CheckForUpdates(true)  ; Force check
 }
 
 ^+x::  ; Stop batch processing and exit script
@@ -1253,7 +1218,7 @@ StopBatchProcessing() {
 
 FindImageOnScreen(imagePath, &imageX, &imageY, &width := 0, &height := 0, searchRegion := "", 
                   toleranceValues := [20, 40, 60, 80, 100, 120, 150], 
-                  saveDebugScreenshot := false, debugPrefix := "debug", matchThreshold := 70) {
+                  saveDebugScreenshot := true, debugPrefix := "debug", matchThreshold := 70) {
     
     ; Initialize the scanner for the game window
     static scanner := ""
@@ -1272,7 +1237,6 @@ FindImageOnScreen(imagePath, &imageX, &imageY, &width := 0, &height := 0, search
         LogAction("Game window not found")
         return false
     }
-    
     
     LogAction("Searching for image: " . imagePath)
     
@@ -1325,7 +1289,7 @@ CheckForUpdates(forceCheck := false) {
         http := ComObject("WinHttp.WinHttpRequest.5.1")
         
         ; Get the latest version info from GitHub
-        versionUrl := "https://raw.githubusercontent.com/" . githubRepo . "/main/version.txt"
+        versionUrl := "https://raw.githubusercontent.com/" . githubRepo . "/refs/heads/master/version.txt"
         http.Open("GET", versionUrl, true)
         http.Send()
         http.WaitForResponse()
@@ -1419,3 +1383,4 @@ DownloadUpdate() {
     return false
 }
 */
+

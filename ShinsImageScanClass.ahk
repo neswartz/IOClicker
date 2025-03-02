@@ -25,44 +25,52 @@ class ShinsImageScanClass {
 	
 	__New(title:=0, UseClientArea_OrMainMonitor:=1) {
 		global ShinsImageScanClass_Monitors
-	
-		this.AutoUpdate 		:= 1 	;when disabled, requires you to call Update() manually to refresh pixel data, useful when you need to scan multiple things on 1 frame
 		
-		this.UseControlClick 	:= 0  	;when enabled attempts to use ControlClick to send clicks which works for background programs
-										;not all programs will respond to this however, so it may be necessary to use normal clicks which have to be foreground
-										
-		this.WindowScale 		:= 1	;if windows has set the desktop scaling to anything other than 100% you can adjust with this variable, for instance if windows scaling is set to 150%, set this variable to 1.5
+		; Set default properties
+		this.AutoUpdate         := 1     ; When disabled, requires manual Update() calls
+		this.UseControlClick    := 0     ; Use ControlClick for background programs
+		this.WindowScale        := 1     ; Adjust for Windows display scaling
+		this.lastError          := ""    ; Track last error message
 		
-		;#############################
-		;	Setup internal stuff
-		;#############################
+		; Detect system DPI scaling automatically
+		dc := DllCall("GetDC", "Ptr", 0, "Ptr")
+		dpiX := DllCall("GetDeviceCaps", "Ptr", dc, "Int", 88, "Int")  ; LOGPIXELSX
+		DllCall("ReleaseDC", "Ptr", 0, "Ptr", dc)
+		
+		; Only adjust scale if it's not 96 DPI (standard)
+		if (dpiX != 96) {
+			this.WindowScale := dpiX / 96
+		}
+		
+		; Initialize GDI+
 		this.LoadLib("gdiplus")
-		gsi := Buffer(24,0)
-		NumPut("uint",1,gsi,0)
+		gsi := Buffer(24, 0)
+		NumPut("uint", 1, gsi, 0)  ; Version
 		token := 0
 		DllCall("gdiplus\GdiplusStartup", "Ptr*", &token, "Ptr", gsi, "Ptr*", 0)
 		this.gdiplusToken := token
 		
-		this.bits := (a_ptrsize == 8) ;0=32,1=64
-		this.desktop := (title = 0 or title = "")
+		; Set up internal variables
+		this.bits := (A_PtrSize == 8)    ; 0=32bit, 1=64bit
+		this.desktop := (title = 0 || title = "")
 		this.UseClientArea := UseClientArea_OrMainMonitor
 		this.VirtualDesktop := !UseClientArea_OrMainMonitor
-		this.DesktopRegion := {x1:0,y1:0,x2:a_screenwidth,y2:a_screenheight,w:a_screenwidth,h:a_screenheight}
+		this.DesktopRegion := {x1:0, y1:0, x2:A_ScreenWidth, y2:A_ScreenHeight, w:A_ScreenWidth, h:A_ScreenHeight}
 		this.imageCache := Map()
 		this.offsetX := 0
 		this.offsetY := 0
 		this.hwnd := 0
-		this.lastError := ""
 		
+		; Set up multi-monitor support for desktop mode
 		if (this.desktop) {
-			coordmode "mouse","screen"
+			coordmode "mouse", "screen"
 			if (!UseClientArea_OrMainMonitor) {
 				ShinsImageScanClass_Monitors := []
-				cbk := CallbackCreate(ShinsImageScanClass_MonitorCallback,"F")
-				DllCall("EnumDisplayMonitors","Ptr",0,"Ptr",0,"ptr",cbk,"uint",0)
+				cbk := CallbackCreate(ShinsImageScanClass_MonitorCallback, "F")
+				DllCall("EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "ptr", cbk, "uint", 0)
 				if (ShinsImageScanClass_Monitors.Length > 0) {
-					this.DesktopRegion := {x1:0,y1:0,x2:0,y2:0,w:0,h:0}
-					for k,v in ShinsImageScanClass_Monitors {
+					this.DesktopRegion := {x1:0, y1:0, x2:0, y2:0, w:0, h:0}
+					for k, v in ShinsImageScanClass_Monitors {
 						if (v.x1 < this.DesktopRegion.x1)
 							this.DesktopRegion.x1 := v.x1
 						if (v.y1 < this.DesktopRegion.y1)
@@ -79,13 +87,50 @@ class ShinsImageScanClass {
 				}
 			}
 		} else if (UseClientArea_OrMainMonitor) {
-			coordmode "mouse","client"
+			coordmode "mouse", "client"
 		} else {
-			coordmode "mouse","window"
+			coordmode "mouse", "window"
 		}
-			
-		this.tBufferPtr := tBufferPtr := Buffer(1048576,0)
-		this.dataPtr := dataPtr := Buffer(1024,0)
+		
+		; Set up buffer and data pointers
+		this.tBufferPtr := Buffer(1048576, 0)
+		this.dataPtr := Buffer(1024, 0)
+		
+		; Find window if not in desktop mode
+		if (!this.desktop) {
+			if (!(this.hwnd := WinExist(title))) {
+				MsgBox "Could not find window: " title "!`n`nScanner will not function!"
+				return
+			}
+		}
+		
+		; Initialize dimensions
+		gw := gh := 0
+		if (!this.GetRect(&gw, &gh))
+			return
+		
+		this.width := gw
+		this.height := gh
+		
+		; Create device contexts
+		if (this.desktop) {
+			this.srcDC := DllCall("CreateDC", "Str", "DISPLAY", "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr")
+		} else {
+			this.srcDC := DllCall("GetDCEx", "Ptr", this.hwnd, "Uint", 0, "Uint", (this.UseClientArea ? 0 : 1), "Ptr")
+		}
+		
+		this.dstDC := DllCall("CreateCompatibleDC", "Ptr", 0, "Ptr")
+		if (!this.srcDC || !this.dstDC) {
+			this.lastError := "Failed to create device context. SrcDC: " this.srcDC ", DstDC: " this.dstDC
+			MsgBox "Failed to create device context. Scanner will not function!"
+			return
+		}
+		
+		; Set up pixel buffer
+		NumPut("Ptr", this.tBufferPtr.ptr, this.dataPtr, (this.bits ? 8 : 4))
+		
+		; Create DIB
+		this.CreateDIB()
 		
 		this._scanImage := this.mcode("VVdWU4PsHItEJDSLTCQwi3wkOIt0JDyLEItZCIlEJAyJfCQEi3wkQInViXQkCMHtEDnrD4bHAAAAi3EMD7fSOfIPg7kAAACLQQQp1g+2VCQEKeuJUBAPvlQkCMcAAAAAAMdABAAAAACJWAiJcAyJUBSF/3Q7g/8BdE6D/wJ0WYP/A3Q8g/8EdGeD/wV0aoP/BnRVg/8HdXWLRCQMiUwkMIlEJDSLQUDrCo20JgAAAACLQTCDxBxbXl9d/+CNdCYAi0E86+6NdgCLQTiDxBxbXl9d/+CNdCYAi0E0g8QcW15fXf/gjXQmAItBROvGjXYAi0FM676NdgCLQUjrto12ALj+////g8QcW15fXcO4/////+vxkJCQkJCQkJCQkJCQ|V1ZTiwJEi1kQi3QkQInHwe8QQTn7D4bVAAAAi1kUD7fAOdgPg8cAAABMi1EIQSn7KcNFD7bARQ++yUnHAgAAAABFiVoIQYlaDEWJQhBFiUoUhfZ0M4P+AXRGg/4CdFGD/gN0NIP+BHRng/4FdHKD/gZ0TYP+Bw+FfQAAAEiLQXjrCmYPH0QAAEiLQVhbXl9I/+BmDx9EAABIi0Fw6+5mkEiLQWhbXl9I/+BmDx9EAABIi0FgW15fSP/gZg8fRAAASIuBgAAAAOvDDx+AAAAAAEiLgZAAAADrsw8fgAAAAABIi4GIAAAA66MPH4AAAAAAuP7///9bXl/DuP/////r9Q==")
 		this._scanImageArray := this.mcode("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")
@@ -122,6 +167,7 @@ class ShinsImageScanClass {
 
 		this._cacheTargetImageFile := this.mcode("U4tMJBQPr0wkEIXJfiGLRCQIi1QkDI0ciI20JgAAAACLCIPABIPCBIlK/DnYdfG4AQAAAFvDkJCQkJCQkJCQkA==|RQ+vwUWFwH50TI1JD0GNQP9JKdFJg/kedm6D+AN2aUWJwTHAQcHpAknB4QQPH0AA8w9vBAEPEQQCSIPAEEw5yHXuRInAg+D8QfbAA3QvQYnBRosUiUaJFIpEjUgBRTnIfhtNY8mDwAJGixSJRokUikE5wH4ISJiLDIGJDIK4AQAAAMMPH0QAAEGJwDHADx8ARIsMgUSJDIJJicFIg8ABTTnBdey4AQAAAMOQkJCQkJA=")
 		
+		; Set up scan types
 		this.scanTypes := Map()
 		this.scanTypes["LRTB"] := 0
 		this.scanTypes["RLTB"] := 2
@@ -132,23 +178,9 @@ class ShinsImageScanClass {
 		this.scanTypes["BTRL"] := 5
 		this.scanTypes["BTLR"] := 4
 		this.scanTypes[0] := 0
-
-		if (!this.desktop and !this.hwnd := winexist(title)) {
-			msgbox "Could not find window: " title "!`n`nScanner will not function!"
-			return
-		}
-		gw := gh := 0
-		if (!this.GetRect(&gw,&gh))
-			return
-		
-		this.width := gw
-		this.height := gh
-		this.srcDC := DllCall("GetDCEx", "Ptr", this.hwnd,"Uint",0,"Uint",(this.UseClientArea ? 0 : 1))
-		this.dstDC := DllCall("CreateCompatibleDC", "Ptr", 0)
-		NumPut("Ptr",this.tBufferPtr.ptr,this.dataPtr,(this.bits ? 8 : 4))
-		this.CreateDIB()
-		
 	}
+
+
 	
 	
 	;####################################################################################################################################################################################################################################
@@ -163,18 +195,41 @@ class ShinsImageScanClass {
 	;
 	;return				;				Returns 1 if the image was found; 0 otherwise
 	
-	Image(image,variance:=0,&returnX:=0,&returnY:=0,centerResults:=0,scanDir:=0) {
-		if (!this.CacheImage(image))
+	Image(image, variance:=0, &returnX:=0, &returnY:=0, centerResults:=0, scanDir:=0) {
+		; Add validation and debugging information
+		if (!image || image == "") {
+			this.lastError := "Empty image path provided"
 			return 0
-		if (this.AutoUpdate)
-			this.Update()
-		data := DllCall(this._ScanImage,"Ptr",this.dataPtr,"Ptr",this.imageCache[image],"uchar",variance,"uchar",centerResults,"int",this.scanTypes[scanDir],"cdecl int")
-		if (data >= 0) {
-			this.MapCoords(data,&returnX,&returnY)
-			return 1
 		}
-		return 0
+	
+		if (!this.CacheImage(image)) {
+			this.lastError := "Failed to cache image: " image
+			return 0
+		}
+		
+		if (this.AutoUpdate) {
+			if (!this.Update()) {
+				this.lastError := "Failed to update screen buffer"
+				return 0
+			}
+		}
+		
+		; Convert scanDir to numeric value if it's a string
+		scanDirection := this.scanTypes.Has(scanDir) ? this.scanTypes[scanDir] : 0
+		
+		; Call the scan function with proper error checking
+		data := DllCall(this._ScanImage, "Ptr", this.dataPtr, "Ptr", this.imageCache[image], 
+					   "uchar", variance, "uchar", centerResults, "int", scanDirection, "cdecl int")
+		
+		if (data < 0) {
+			this.lastError := "Image scan failed with result: " data
+			return 0
+		}
+		
+		this.MapCoords(data, &returnX, &returnY)
+		return 1
 	}
+	
 	
 	
 	;####################################################################################################################################################################################################################################
@@ -530,51 +585,95 @@ class ShinsImageScanClass {
 	;
 	;notes				;				Saves the current pixel buffer to a png image
 	
-	SaveImage(name,x:=0,y:=0,w:=0,h:=0) {
-		if (!InStr(name,".png"))
+	SaveImage(name, x:=0, y:=0, w:=0, h:=0) {
+		if (!InStr(name, ".png"))
 			name .= ".png"
-		if (this.desktop or this.CheckWindow()) {
-			bm := 0
-			if (x!=0 or y!=0 or w!=0 or h!=0) {
-				dstDC := DllCall("CreateCompatibleDC", "Ptr", 0)
-				bi := Buffer(40,0), _scan := 0
-				NumPut("int",w,bi,4),NumPut("int",-h,bi,8),NumPut("uint",40,bi,0),NumPut("ushort",1,bi,12),NumPut("ushort",32,bi,14)
-				hbm := DllCall("CreateDIBSection", "Ptr", dstDC, "Ptr", bi.ptr, "uint", 0, "Ptr*", &_scan, "Ptr", 0, "uint", 0, "Ptr")
-				DllCall("SelectObject", "Ptr", dstDC, "Ptr", hbm)
-				DllCall("gdi32\BitBlt", "Ptr", dstDC, "int", 0, "int", 0, "int", (w=0?this.width:w), "int", (h=0?this.height:h), "Ptr", this.srcDC, "int", x, "int", y, "uint", 0xCC0020) ;40
-				DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "Ptr", hbm, "Ptr", 0, "Ptr*", &bm)
+		
+		; Ensure valid dimensions
+		if (w == 0)
+			w := this.width
+		if (h == 0)
+			h := this.height
+		
+		; Force update to ensure we have current image data
+		if (this.AutoUpdate)
+			this.Update(x, y, w, h)
+		
+		if (this.desktop || this.CheckWindow()) {
+			; Create a compatible DC and DIB section for the image
+			dstDC := DllCall("CreateCompatibleDC", "Ptr", 0)
+			
+			; Create appropriate bitmap info structure
+			bi := Buffer(40, 0)
+			NumPut("uint", 40, bi, 0)           ; Size of structure
+			NumPut("int", w, bi, 4)             ; Width
+			NumPut("int", -h, bi, 8)            ; Height (negative for top-down)
+			NumPut("ushort", 1, bi, 12)         ; Planes
+			NumPut("ushort", 32, bi, 14)        ; Bits per pixel
+			NumPut("uint", 0, bi, 16)           ; Compression (0 = none)
+			
+			; Create DIB section and get scan pointer
+			pBits := 0
+			hbm := DllCall("CreateDIBSection", "Ptr", dstDC, "Ptr", bi.ptr, "uint", 0, "Ptr*", &pBits, "Ptr", 0, "uint", 0, "Ptr")
+			
+			; Select bitmap into DC
+			DllCall("SelectObject", "Ptr", dstDC, "Ptr", hbm)
+			
+			; Transfer image data
+			if (x != 0 || y != 0 || w != this.width || h != this.height) {
+				; For region, use the specified coordinates
+				DllCall("gdi32\BitBlt", "Ptr", dstDC, "int", 0, "int", 0, "int", w, "int", h, 
+					   "Ptr", this.srcDC, "int", x, "int", y, "uint", 0x00CC0020) ; SRCCOPY
 			} else {
-				if (this.desktop and this.virtualDesktop)
-					DllCall("gdi32\BitBlt", "Ptr", this.dstDC, "int", 0, "int", 0, "int", this.width, "int", this.height, "Ptr", this.srcDC, "int", this.desktopRegion.x1, "int", this.desktopRegion.y1, "uint", 0xCC0020) ;40
+				; For full image
+				if (this.desktop && this.virtualDesktop)
+					DllCall("gdi32\BitBlt", "Ptr", dstDC, "int", 0, "int", 0, "int", w, "int", h, 
+							"Ptr", this.srcDC, "int", this.desktopRegion.x1, "int", this.desktopRegion.y1, "uint", 0x00CC0020) ; SRCCOPY
 				else
-					DllCall("gdi32\BitBlt", "Ptr", this.dstDC, "int", 0, "int", 0, "int", this.width, "int", this.height, "Ptr", this.srcDC, "int", 0, "int", 0, "uint", 0xCC0020) ;40
-				DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "Ptr", this.hbm, "Ptr", 0, "Ptr*", &bm)
+					DllCall("gdi32\BitBlt", "Ptr", dstDC, "int", 0, "int", 0, "int", w, "int", h, 
+							"Ptr", this.srcDC, "int", 0, "int", 0, "uint", 0x00CC0020) ; SRCCOPY
 			}
-		
-		
-			;largely borrowed from tic function, encoder stuff is a pain
+			
+			; Convert to GDI+ bitmap
+			bm := 0
+			DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "Ptr", hbm, "Ptr", 0, "Ptr*", &bm)
+			
+			; Find PNG encoder
 			nCount := nSize := 0
 			DllCall("gdiplus\GdipGetImageEncodersSize", "uint*", &nCount, "uint*", &nSize)
 			ci := Buffer(nSize)
 			DllCall("gdiplus\GdipGetImageEncoders", "uint", nCount, "uint", nSize, "Ptr", ci)
-			if !(nCount && nSize) {
-				msgbox "Problem getting encoder information"
-				return 0
-			}
-			Loop nCount {
-				sString := StrGet(NumGet(ci, (idx := (48+7*A_PtrSize)*(A_Index-1))+32+3*A_PtrSize,"ptr"),,"UTF-16") ;Thanks tic, this particularily confused me!
-				if (InStr(sString, "*.PNG")) {
-					pCodec := ci.ptr + idx
-					break
+			
+			; Find PNG encoder CLSID
+			pCodec := 0
+			if (nCount && nSize) {
+				Loop nCount {
+					idx := (48+7*A_PtrSize)*(A_Index-1)
+					sString := StrGet(NumGet(ci, idx+32+3*A_PtrSize, "ptr"), , "UTF-16")
+					if (InStr(sString, "*.PNG")) {
+						pCodec := ci.ptr + idx
+						break
+					}
 				}
 			}
+			
 			if (!pCodec) {
-				msgbox "Problem finding png codec"
+				MsgBox "Problem finding PNG codec"
 				return 0
 			}
-			v := DllCall("gdiplus\GdipSaveImageToFile", "Ptr", bm, "Ptr", StrPtr(name), "Ptr", pCodec, "uint", 0)
+			
+			; Save the image to file
+			result := DllCall("gdiplus\GdipSaveImageToFile", "Ptr", bm, "Ptr", StrPtr(name), "Ptr", pCodec, "uint", 0)
+			
+			; Clean up resources
+			DllCall("gdiplus\GdipDisposeImage", "Ptr", bm)
+			DllCall("DeleteObject", "Ptr", hbm)
+			DllCall("DeleteDC", "Ptr", dstDC)
+			
+			return (result == 0) ? 1 : 0
 		} else {
-			msgbox "Unable to save image: " name "`n`nIs the window minimized?"
+			MsgBox "Unable to save image: " name "`n`nIs the window minimized?"
+			return 0
 		}
 	}
 	
@@ -752,18 +851,23 @@ class ShinsImageScanClass {
 		}
 	}
 	CheckWindow() {
-	
-		if (this.UseClientArea and !this.GetClientRect(&w,&h))
+		if (this.UseClientArea && !this.GetClientRect(&w, &h))
 			return 0
-		else if (!this.UseClientArea and !this.GetWindowRect(&w,&h))
+		else if (!this.UseClientArea && !this.GetWindowRect(&w, &h))
 			return 0
 			
-		if (w != this.width or h != this.height) {
+		if (w <= 0 || h <= 0) {
+			this.lastError := "Invalid window dimensions: " w "x" h
+			return 0
+		}
+		
+		if (w != this.width || h != this.height) {
 			this.width := w
 			this.height := h
-			DllCall("DeleteObject","Ptr",this.hbm)
+			DllCall("DeleteObject", "Ptr", this.hbm)
 			this.CreateDIB()
 		}
+		
 		return 1
 	}
 	MapCoords(d,&x,&y) {
@@ -771,71 +875,191 @@ class ShinsImageScanClass {
 		y := (this.offsetY + (d&0xFFFF)) * this.WindowScale
 	}
 	CreateDIB() {
-		bi := Buffer(40,0)
-		NumPut("int",this.width,bi,4)
-		NumPut("int",-this.height,bi,8)
-		NumPut("uint",40,bi,0)
-		NumPut("ushort",1,bi,12)
-		NumPut("ushort",32,bi,14)
+		bi := Buffer(40, 0)
+		NumPut("uint", 40, bi, 0)                  ; Size of structure
+		NumPut("int", this.width, bi, 4)           ; Width
+		NumPut("int", -this.height, bi, 8)         ; Height (negative for top-down)
+		NumPut("ushort", 1, bi, 12)                ; Planes
+		NumPut("ushort", 32, bi, 14)               ; Bits per pixel
+		NumPut("uint", 0, bi, 16)                  ; Compression (0 = none)
+		NumPut("uint", this.width * this.height * 4, bi, 20) ; Image size in bytes
+		
 		_scan := 0
 		this.hbm := DllCall("CreateDIBSection", "Ptr", this.dstDC, "Ptr", bi.ptr, "uint", 0, "Ptr*", &_scan, "Ptr", 0, "uint", 0, "Ptr")
+		
+		if (!this.hbm) {
+			this.lastError := "CreateDIBSection failed: " A_LastError
+			MsgBox "Failed to create bitmap. Scanner will not function!"
+			return 0
+		}
+		
 		this.temp0 := _scan
-		NumPut("Ptr",_scan,this.dataPtr,0)
-		NumPut("uint",this.width,this.dataPtr,(this.bits ? 16 : 8))
-		NumPut("uint",this.height,this.dataPtr,(this.bits ? 20 : 12))
+		NumPut("Ptr", _scan, this.dataPtr, 0)
+		NumPut("uint", this.width, this.dataPtr, (this.bits ? 16 : 8))
+		NumPut("uint", this.height, this.dataPtr, (this.bits ? 20 : 12))
+		
 		DllCall("SelectObject", "Ptr", this.dstDC, "Ptr", this.hbm)
+		return 1
 	}
 	__Delete() {
 		DllCall("gdiplus\GdiplusShutdown", "Ptr*", this.gdiplusToken)
 	}
 	CacheImage(image) {
-		if (this.imageCache.has(image))
+		; Skip if already cached
+		if (this.imageCache.Has(image))
 			return 1
-		if (image = "") {
-			msgbox "Error, expected resource image path but empty variable was supplied!"
+		
+		; Validate image path
+		if (image == "") {
+			this.lastError := "Error, expected resource image path but empty variable was supplied!"
 			return 0
 		}
+		
 		if (!FileExist(image)) {
-			msgbox "Error finding resource image: '" image "' does not exist!"
+			this.lastError := "Error finding resource image: '" image "' does not exist!"
 			return 0
 		}
-		bm := w := h := 0
-		DllCall("gdiplus\GdipCreateBitmapFromFile", "Str", image, "Ptr*", &bm)
+		
+		; Initialize variables
+		bm := 0
+		w := 0
+		h := 0
+		
+		; Create bitmap from file
+		result := DllCall("gdiplus\GdipCreateBitmapFromFile", "Str", image, "Ptr*", &bm)
+		if (result != 0) {
+			this.lastError := "GdipCreateBitmapFromFile failed with error: " result
+			return 0
+		}
+		
+		; Get image dimensions
 		DllCall("gdiplus\GdipGetImageWidth", "Ptr", bm, "Uint*", &w)
 		DllCall("gdiplus\GdipGetImageHeight", "Ptr", bm, "Uint*", &h)
-		r := Buffer(16,0)
-		NumPut("uint",w,r,8)
-		NumPut("uint",h,r,12)
-		bmdata := Buffer(32,0)
-		DllCall("Gdiplus\GdipBitmapLockBits", "Ptr", bm, "Ptr", r, "uint", 3, "int", 0x26200A, "Ptr", bmdata)
+		
+		if (w <= 0 || h <= 0) {
+			this.lastError := "Invalid image dimensions: " w "x" h
+			DllCall("gdiplus\GdipDisposeImage", "ptr", bm)
+			return 0
+		}
+		
+		; Create rectangle for locking bits
+		r := Buffer(16, 0)
+		NumPut("uint", w, r, 8)
+		NumPut("uint", h, r, 12)
+		
+		; Lock bitmap bits to access pixel data
+		bmdata := Buffer(32, 0)
+		result := DllCall("Gdiplus\GdipBitmapLockBits", "Ptr", bm, "Ptr", r, "uint", 3, "int", 0x26200A, "Ptr", bmdata)
+		if (result != 0) {
+			this.lastError := "GdipBitmapLockBits failed with error: " result
+			DllCall("gdiplus\GdipDisposeImage", "ptr", bm)
+			return 0
+		}
+		
+		; Get scan pointer
 		scan := NumGet(bmdata, 16, "Ptr")
+		if (!scan) {
+			this.lastError := "Failed to get scan pointer from bitmap"
+			DllCall("Gdiplus\GdipBitmapUnlockBits", "Ptr", bm, "Ptr", bmdata)
+			DllCall("gdiplus\GdipDisposeImage", "ptr", bm)
+			return 0
+		}
+		
+		; Allocate memory for image data
 		p := DllCall("GlobalAlloc", "uint", 0x40, "ptr", 16+((w*h)*4), "ptr")
-		NumPut("uint",(w<<16)+h,p,0)
-		loop ((w*h)*4)
-			NumPut("uchar",NumGet(scan,a_index-1,"uchar"),p,a_index+7)
-		loop (w*h)
-			if (NumGet(scan,(a_index-1)*4,"uint") < 0xFF000000) {
-				NumPut("uint",1,p+4,0)
+		if (!p) {
+			this.lastError := "Failed to allocate memory for image data"
+			DllCall("Gdiplus\GdipBitmapUnlockBits", "Ptr", bm, "Ptr", bmdata)
+			DllCall("gdiplus\GdipDisposeImage", "ptr", bm)
+			return 0
+		}
+		
+		; Store dimensions
+		NumPut("uint", (w<<16)+h, p, 0)
+		
+		; Copy pixel data
+		hasTransparency := 0
+		Loop ((w*h)*4)
+			NumPut("uchar", NumGet(scan, a_index-1, "uchar"), p, a_index+7)
+		
+		; Check for transparency
+		Loop (w*h) {
+			if (NumGet(scan, (a_index-1)*4, "uint") < 0xFF000000) {
+				NumPut("uint", 1, p+4, 0)  ; Set transparency flag
+				hasTransparency := 1
 				break
 			}
+		}
+		
+		; Unlock bitmap and dispose
 		DllCall("Gdiplus\GdipBitmapUnlockBits", "Ptr", bm, "Ptr", bmdata)
 		DllCall("gdiplus\GdipDisposeImage", "ptr", bm)
+		
+		; Store in cache
 		this.imageCache[image] := p
 		return 1
 	}
-	Update(x:=0,y:=0,w:=0,h:=0,applyOffset:=1) {
+	Update(x:=0, y:=0, w:=0, h:=0, applyOffset:=1) {
+		if (w == 0) 
+			w := this.width
+		if (h == 0) 
+			h := this.height
+		
 		if (this.desktop) {
-			DllCall("gdi32\BitBlt", "Ptr", this.dstDC, "int", 0, "int", 0, "int", (!w||w>this.desktopRegion.w?this.desktopRegion.w:w), "int", (!h||h>this.desktopRegion.h?this.desktopRegion.h:h), "Ptr", this.srcDC, "int", this.desktopRegion.x1+x, "int", this.desktopRegion.y1+y, "uint", 0xCC0020) ;40
+			if (w > this.desktopRegion.w)
+				w := this.desktopRegion.w
+			if (h > this.desktopRegion.h)
+				h := this.desktopRegion.h
+				
+			result := DllCall("gdi32\BitBlt", 
+							  "Ptr", this.dstDC, 
+							  "int", 0, 
+							  "int", 0, 
+							  "int", w, 
+							  "int", h, 
+							  "Ptr", this.srcDC, 
+							  "int", this.desktopRegion.x1+x, 
+							  "int", this.desktopRegion.y1+y, 
+							  "uint", 0x00CC0020)  ; SRCCOPY
+			
+			if (!result) {
+				this.lastError := "BitBlt failed in desktop mode"
+				return 0
+			}
 		} else if (this.CheckWindow()) {
-			DllCall("gdi32\BitBlt", "Ptr", this.dstDC, "int", 0, "int", 0, "int", (!w||w>this.width?this.width:w), "int", (!h||h>this.height?this.height:h), "Ptr", this.srcDC, "int", x, "int", y, "uint", 0xCC0020) ;40
+			if (w > this.width)
+				w := this.width
+			if (h > this.height)
+				h := this.height
+				
+			result := DllCall("gdi32\BitBlt", 
+							  "Ptr", this.dstDC, 
+							  "int", 0, 
+							  "int", 0, 
+							  "int", w, 
+							  "int", h, 
+							  "Ptr", this.srcDC, 
+							  "int", x, 
+							  "int", y, 
+							  "uint", 0x00CC0020)  ; SRCCOPY
+			
+			if (!result) {
+				this.lastError := "BitBlt failed in window mode"
+				return 0
+			}
 		} else { 
+			this.lastError := "CheckWindow failed"
 			return 0
 		}
+		
 		if (applyOffset) {
-			this.offsetX := x, this.offsetY := y
+			this.offsetX := x
+			this.offsetY := y
 		} else {
 			this.offsetX := this.offsetY := 0
 		}
+		
+		return 1
 	}
 	GetRect(&w, &h) {
 		if (this.desktop) {
