@@ -153,32 +153,28 @@ LogAction(message) {
 ; }
 
 ; -----------------------------------------------------------------------------
-; Loads UI element positions and batch settings from the configuration file.
+; Loads UI element positions from the positions configuration file.
 LoadPositionsFromFile() {
-    global capturedPositions, configFile, lastIconSequence, lastRepetitionCount, lastWaitTimeBetweenCycles
+    global capturedPositions, configFile
     Local fileSize, fileContent, lines, lineCount, positionsFound, i, line, pos, key, value, coords
-    Local inPositionsSection := false, inBatchSettingsSection := false
     
     LogAction("Attempting to load positions from: " . configFile)
     if (!FileExist(configFile)) {
         LogAction("Config file does not exist: " . configFile)
         try {
-            FileAppend("[Positions]`n[BatchSettings]`n", configFile)
+            FileAppend("[Positions]`n", configFile)
             if (FileExist(configFile)) {
-                LogAction("Created new empty config file: " . configFile)
-                MsgBox("Created new configuration file: " . configFile)
+                LogAction("Created new empty positions file: " . configFile)
+                MsgBox("Created new positions file: " . configFile)
             } else {
-                LogAction("ERROR: Failed to create config file")
+                LogAction("ERROR: Failed to create positions file")
                 MsgBox("Warning: Cannot create files in the script directory. Check permissions.")
             }
         } catch {
-            LogAction("ERROR: Exception when creating config file")
-            MsgBox("Error creating configuration file. Check permissions.")
+            LogAction("ERROR: Exception when creating positions file")
+            MsgBox("Error creating positions file. Check permissions.")
         }
         capturedPositions := Map()
-        lastIconSequence := ""
-        lastRepetitionCount := 1
-        lastWaitTimeBetweenCycles := 5
         return
     }
     
@@ -188,92 +184,53 @@ LoadPositionsFromFile() {
         fileSize := 0
     }
     
-    LogAction("Config file exists with size: " . fileSize . " bytes")
+    LogAction("Positions file exists with size: " . fileSize . " bytes")
     if (fileSize <= 0) {
-        LogAction("Config file exists but is empty")
+        LogAction("Positions file exists but is empty")
         capturedPositions := Map()
-        lastIconSequence := ""
-        lastRepetitionCount := 1
-        lastWaitTimeBetweenCycles := 5
         return
     }
     capturedPositions := Map()
-    lastIconSequence := ""
-    lastRepetitionCount := 1
-    lastWaitTimeBetweenCycles := 5
     
     try {
         fileContent := FileRead(configFile)
-        LogAction("Successfully read config file content with length: " . StrLen(fileContent))
+        LogAction("Successfully read positions file content with length: " . StrLen(fileContent))
         lines := StrSplit(fileContent, "`n", "`r")
         lineCount := lines.Length
-        LogAction("Config file contains " . lineCount . " lines")
+        LogAction("Positions file contains " . lineCount . " lines")
         positionsFound := 0
         
         Loop lineCount {
             line := lines[A_Index]
             
-            ; Check for section headers
-            if (line == "[Positions]") {
-                inPositionsSection := true
-                inBatchSettingsSection := false
-                continue
-            } else if (line == "[BatchSettings]") {
-                inPositionsSection := false
-                inBatchSettingsSection := true
-                continue
-            }
-            
-            ; Skip empty lines
-            if (line == "")
+            ; Skip section headers and empty lines
+            if (line == "[Positions]" || line == "")
                 continue
             
             ; Process positions
-            if (inPositionsSection) {
-                pos := InStr(line, "=")
-                if (pos > 0) {
-                    key := SubStr(line, 1, pos-1)
-                    value := SubStr(line, pos+1)
-                    coords := StrSplit(value, ",")
-                    if (coords.Length == 2) {
-                        if (!capturedPositions.Has(key))
-                            capturedPositions[key] := Map()
-                        capturedPositions[key]["X"] := coords[1]
-                        capturedPositions[key]["Y"] := coords[2]
-                        positionsFound++
-                    }
-                }
-            }
-            
-            ; Process batch settings
-            if (inBatchSettingsSection) {
-                pos := InStr(line, "=")
-                if (pos > 0) {
-                    key := SubStr(line, 1, pos-1)
-                    value := SubStr(line, pos+1)
-                    
-                    if (key == "IconSequence") {
-                        lastIconSequence := value
-                        LogAction("Loaded IconSequence: " . value)
-                    } else if (key == "RepetitionCount") {
-                        lastRepetitionCount := Integer(value)
-                        LogAction("Loaded RepetitionCount: " . value)
-                    } else if (key == "WaitTime") {
-                        lastWaitTimeBetweenCycles := Float(value)
-                        LogAction("Loaded WaitTime: " . value)
-                    }
+            pos := InStr(line, "=")
+            if (pos > 0) {
+                key := SubStr(line, 1, pos-1)
+                value := SubStr(line, pos+1)
+                coords := StrSplit(value, ",")
+                if (coords.Length == 2) {
+                    if (!capturedPositions.Has(key))
+                        capturedPositions[key] := Map()
+                    capturedPositions[key]["X"] := coords[1]
+                    capturedPositions[key]["Y"] := coords[2]
+                    positionsFound++
                 }
             }
         }
         
-        LogAction("Loaded " . positionsFound . " positions from config file")
+        LogAction("Loaded " . positionsFound . " positions from positions file")
         if (positionsFound == 0 && lineCount > 1) {
             LogAction("WARNING: File has content but no valid positions were found")
-            MsgBox("Warning: The config file exists but no valid positions were found.")
+            MsgBox("Warning: The positions file exists but no valid positions were found.")
         }
     } catch {
-        LogAction("ERROR: Exception when reading config file")
-        MsgBox("Error reading config file. Check the log for details.")
+        LogAction("ERROR: Exception when reading positions file")
+        MsgBox("Error reading positions file. Check the log for details.")
     }
     
     ; Log first loaded position for debugging
@@ -282,6 +239,85 @@ LoadPositionsFromFile() {
             LogAction("First position found: " . key . " = " . pos["X"] . "," . pos["Y"])
             break
         }
+    }
+}
+
+; -----------------------------------------------------------------------------
+; Loads batch settings from the configuration file.
+LoadConfigSettings() {
+    global configIniFile, lastIconSequence, lastRepetitionCount, lastWaitTimeBetweenCycles
+    Local fileSize, fileContent, lines, lineCount
+    
+    LogAction("Attempting to load config settings from: " . configIniFile)
+    lastIconSequence := ""
+    lastRepetitionCount := 1
+    lastWaitTimeBetweenCycles := 5
+    
+    if (!FileExist(configIniFile)) {
+        LogAction("Config file does not exist: " . configIniFile)
+        try {
+            FileAppend("[BatchSettings]`n", configIniFile)
+            if (FileExist(configIniFile)) {
+                LogAction("Created new empty config file: " . configIniFile)
+                MsgBox("Created new configuration file: " . configIniFile)
+            } else {
+                LogAction("ERROR: Failed to create config file")
+                MsgBox("Warning: Cannot create files in the script directory. Check permissions.")
+            }
+        } catch {
+            LogAction("ERROR: Exception when creating config file")
+            MsgBox("Error creating configuration file. Check permissions.")
+        }
+        return
+    }
+    
+    try {
+        fileSize := FileGetSize(configIniFile)
+    } catch {
+        fileSize := 0
+    }
+    
+    LogAction("Config file exists with size: " . fileSize . " bytes")
+    if (fileSize <= 0) {
+        LogAction("Config file exists but is empty")
+        return
+    }
+    
+    try {
+        fileContent := FileRead(configIniFile)
+        LogAction("Successfully read config file content with length: " . StrLen(fileContent))
+        lines := StrSplit(fileContent, "`n", "`r")
+        lineCount := lines.Length
+        LogAction("Config file contains " . lineCount . " lines")
+        
+        Loop lineCount {
+            line := lines[A_Index]
+            
+            ; Skip section headers and empty lines
+            if (line == "[BatchSettings]" || line == "")
+                continue
+            
+            ; Process batch settings
+            pos := InStr(line, "=")
+            if (pos > 0) {
+                key := SubStr(line, 1, pos-1)
+                value := SubStr(line, pos+1)
+                
+                if (key == "IconSequence") {
+                    lastIconSequence := value
+                    LogAction("Loaded IconSequence: " . value)
+                } else if (key == "RepetitionCount") {
+                    lastRepetitionCount := Integer(value)
+                    LogAction("Loaded RepetitionCount: " . value)
+                } else if (key == "WaitTime") {
+                    lastWaitTimeBetweenCycles := Float(value)
+                    LogAction("Loaded WaitTime: " . value)
+                }
+            }
+        }
+    } catch {
+        LogAction("ERROR: Exception when reading config file")
+        MsgBox("Error reading config file. Check the log for details.")
     }
 }
 
@@ -417,9 +453,9 @@ StartAutomatedPositionCapture() {
 }
 
 ; -----------------------------------------------------------------------------
-; Saves captured positions and batch settings to the configuration file.
+; Saves captured positions to the configuration file.
 SavePositionsToFile() {
-    global capturedPositions, configFile, lastIconSequence, lastRepetitionCount, lastWaitTimeBetweenCycles
+    global capturedPositions, configFile
     Local posCount, fileContent, fileSize, key, pos
     posCount := capturedPositions.Count
     LogAction("Attempting to save " . posCount . " positions to file: " . configFile)
@@ -434,20 +470,54 @@ SavePositionsToFile() {
         fileContent .= key . "=" . pos["X"] . "," . pos["Y"] . "`n"
     }
     
+    try {
+        FileDelete(configFile)
+        LogAction("Deleted existing positions file if present")
+        FileAppend(fileContent, configFile)
+        if (FileExist(configFile)) {
+            fileSize := FileGetSize(configFile)
+            if (fileSize > 0)
+                LogAction("SUCCESS: Saved " . posCount . " positions to " . configFile . " (" . fileSize . " bytes)")
+            else {
+                LogAction("ERROR: File created but empty!")
+                MsgBox("Error: Positions file was created but is empty! Check permissions.")
+            }
+        } else {
+            LogAction("ERROR: Failed to create positions file!")
+            MsgBox("Error: Failed to create positions file! Check path and permissions.")
+        }
+    } catch {
+        LogAction("ERROR: Exception when saving file")
+        MsgBox("Error saving positions. Check log for details.")
+    }
+}
+
+; -----------------------------------------------------------------------------
+; Saves batch settings to the configuration file.
+SaveConfigSettings() {
+    global configIniFile, lastIconSequence, lastRepetitionCount, lastWaitTimeBetweenCycles
+    Local fileContent, fileSize
+    LogAction("Attempting to save batch settings to file: " . configIniFile)
+    
+    if (FileExist(configIniFile)) {
+        FileCopy(configIniFile, configIniFile . ".bak", 1)
+        LogAction("Backup created: " . configIniFile . ".bak")
+    }
+    
     ; Add batch settings section
-    fileContent .= "`n[BatchSettings]`n"
+    fileContent := "[BatchSettings]`n"
     fileContent .= "IconSequence=" . lastIconSequence . "`n"
     fileContent .= "RepetitionCount=" . lastRepetitionCount . "`n"
     fileContent .= "WaitTime=" . lastWaitTimeBetweenCycles . "`n"
     
     try {
-        FileDelete(configFile)
+        FileDelete(configIniFile)
         LogAction("Deleted existing config file if present")
-        FileAppend(fileContent, configFile)
-        if (FileExist(configFile)) {
-            fileSize := FileGetSize(configFile)
+        FileAppend(fileContent, configIniFile)
+        if (FileExist(configIniFile)) {
+            fileSize := FileGetSize(configIniFile)
             if (fileSize > 0)
-                LogAction("SUCCESS: Saved " . posCount . " positions and batch settings to " . configFile . " (" . fileSize . " bytes)")
+                LogAction("SUCCESS: Saved batch settings to " . configIniFile . " (" . fileSize . " bytes)")
             else {
                 LogAction("ERROR: File created but empty!")
                 MsgBox("Error: Config file was created but is empty! Check permissions.")
@@ -458,10 +528,8 @@ SavePositionsToFile() {
         }
     } catch {
         LogAction("ERROR: Exception when saving file")
-        MsgBox("Error saving positions. Check log for details.")
+        MsgBox("Error saving config settings. Check log for details.")
     }
-    
-    SplitPath(configFile, &fileName, &fileDir)
 }
 
 ; -----------------------------------------------------------------------------
@@ -478,11 +546,12 @@ ResizeGameWindow() {
 }
 
 ; -----------------------------------------------------------------------------
-; Improved version of ProcessSpecificIcon using the new FindImageOnScreen function
+; Improved version of ProcessSpecificIcon using the enhanced image recognition
 ProcessSpecificIcon(setNum, pageNum, iconNum) {
     global capturedPositions, buttonImageFile, windowWidth, windowHeight, batchProcessingActive
     Local WinX, WinY, WinW, WinH, downArrowKey, upArrowKey, downArrowX, downArrowY, upArrowX, upArrowY
     Local iconKey, iconX, iconY, buttonFile, buttonX, buttonY, buttonWidth, buttonHeight, buttonCenterX, buttonCenterY
+    Local buttonVariants, variantFile, found
 
     ; Ensure window is active and sized
     EnsureGameWindowActive()
@@ -492,10 +561,12 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
         ResizeGameWindow()
         WinGetPos(&WinX, &WinY, &WinW, &WinH, "ahk_exe LegendsOfIdleon.exe")
     }
+    
     if (!WinActive("ahk_exe LegendsOfIdleon.exe")) {
         WinActivate("ahk_exe LegendsOfIdleon.exe")
         Sleep(1000)
     }
+    
     ; Ensure alchemy screen is open
     if (!EnsureAlchemyScreenOpen(WinW, WinH))
         return false
@@ -505,11 +576,13 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
     ; Validate navigation arrow positions
     downArrowKey := "Set" . setNum . "_DownArrow"
     upArrowKey := "Set" . setNum . "_UpArrow"
+    
     if (!capturedPositions.Has(downArrowKey) || !capturedPositions.Has(upArrowKey)) {
         LogAction("Missing navigation arrow positions for Set " . setNum)
         MsgBox("Missing navigation arrow positions for Set " . setNum . ". Please use position finder to set them.")
         return false
     }
+    
     downArrowX := capturedPositions[downArrowKey]["X"]
     downArrowY := capturedPositions[downArrowKey]["Y"]
     upArrowX := capturedPositions[upArrowKey]["X"]
@@ -521,6 +594,7 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
         MouseClick("left", downArrowX, downArrowY)
         Sleep(300)
     }
+    
     ; Navigate to desired page using up arrow
     if (pageNum > 1) {
         navigateClicks := pageNum - 1
@@ -530,6 +604,7 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
             Sleep(300)
         }
     }
+    
     ; Process the specified icon
     iconKey := "Set" . setNum . "_Page" . pageNum . "_Icon" . iconNum
     if (!capturedPositions.Has(iconKey)) {
@@ -537,41 +612,94 @@ ProcessSpecificIcon(setNum, pageNum, iconNum) {
         MsgBox("Position for " . iconKey . " not found. Please use position finder to set it.")
         return false
     }
+    
     iconX := capturedPositions[iconKey]["X"]
     iconY := capturedPositions[iconKey]["Y"]
     LogAction("Clicking icon " . iconNum . " at position: " . iconX . ", " . iconY)
     MouseClick("left", iconX, iconY)
     Sleep(1000)
 
-    ; Click the upgrade button using our new image recognition function
-    buttonFile := A_ScriptDir . "\" . buttonImageFile
+    ; Click the upgrade button using our enhanced image recognition
+    ; First, check if we have brightness variants of the button image
+    found := false
+    buttonBaseName := SubStr(buttonImageFile, 1, InStr(buttonImageFile, ".", , , 1) - 1)
+    buttonVariants := []
     
-    ; Use the new function to find the button
-    debugPrefix := "debug_" . setNum . "_" . pageNum . "_" . iconNum
-    if (FindImageOnScreen(buttonFile, &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
-                         "", , true, debugPrefix)) {
+    ; Add the original image first
+    buttonVariants.Push(A_ScriptDir . "\" . buttonImageFile)
+    
+    ; Add any brightness variants if they exist
+    brightnessLevels := [-30, -15, 0, 15, 30]
+    for _, brightness in brightnessLevels {
+        variantFile := A_ScriptDir . "\" . buttonBaseName . "_bright" . brightness . ".png"
+        if (FileExist(variantFile))
+            buttonVariants.Push(variantFile)
+    }
+    
+    ; Try each button image variant
+    for _, buttonFile in buttonVariants {
+        LogAction("Trying button image: " . buttonFile)
         
-        buttonCenterX := buttonX + (buttonWidth / 2)
-        buttonCenterY := buttonY + (buttonHeight / 2)
+        ; Use the enhanced image search
+        debugPrefix := "debug_" . setNum . "_" . pageNum . "_" . iconNum
+        if (FindImageOnScreen(buttonFile, &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
+                             "", [20, 40, 60, 80, 100, 120, 150], true, debugPrefix)) {
+            
+            buttonCenterX := buttonX + (buttonWidth / 2)
+            buttonCenterY := buttonY + (buttonHeight / 2)
+            
+            LogAction("Found upgrade button at: " . buttonX . ", " . buttonY . " - Clicking center: " . buttonCenterX . ", " . buttonCenterY)
+            MouseClick("left", buttonCenterX, buttonCenterY)
+            Sleep(1000)
+            found := true
+            break
+        }
+    }
+    
+    if (!found) {
+        ; If no variant matched, try a more general approach - look for the button in a specific region
+        LogAction("Standard search failed, trying region-based search")
         
-        LogAction("Found upgrade button at: " . buttonX . ", " . buttonY . " - Clicking center: " . buttonCenterX . ", " . buttonCenterY)
-        MouseClick("left", buttonCenterX, buttonCenterY)
+        ; Define a search region based on game UI expectations - this is approximate
+        ; Typically the upgrade button appears in the lower part of the window
+        searchRegion := (WinW * 0.3) . "|" . (WinH * 0.6) . "|" . (WinW * 0.4) . "|" . (WinH * 0.3)
+        
+        if (FindImageOnScreen(buttonVariants[1], &buttonX, &buttonY, &buttonWidth, &buttonHeight, 
+                             searchRegion, [40, 80, 120, 160, 200], true, debugPrefix . "_region")) {
+            
+            buttonCenterX := buttonX + (buttonWidth / 2)
+            buttonCenterY := buttonY + (buttonHeight / 2)
+            
+            LogAction("Found upgrade button in region at: " . buttonX . ", " . buttonY . " - Clicking center: " . buttonCenterX . ", " . buttonCenterY)
+            MouseClick("left", buttonCenterX, buttonCenterY)
+            Sleep(1000)
+            found := true
+        }
+    }
+    
+    if (!found) {
+        ; Final fallback - click a consistent relative position where the button is expected to be
+        LogAction("Image search failed, trying fallback position")
+        
+        ; Calculate fallback position - typically bottom center area
+        buttonFallbackX := WinW * 0.5
+        buttonFallbackY := WinH * 0.75
+        
+        LogAction("Using fallback position: " . buttonFallbackX . ", " . buttonFallbackY)
+        MouseClick("left", buttonFallbackX, buttonFallbackY)
         Sleep(1000)
         
-        ; Try to click the icon again to close the upgrade dialog
-        LogAction("Clicking icon again at position: " . iconX . ", " . iconY)
-        MouseClick("left", iconX, iconY)
-        LogAction("Completed processing icon")
-        return true
-    } else {
         ; Don't show dialog in batch mode to avoid interrupting the process
         if (!batchProcessingActive) {
-            MsgBox("Could not find the upgrade button on screen. A debug screenshot has been saved.")
-        } else {
-            LogAction("Continuing batch process despite upgrade button detection failure")
+            MsgBox("Warning: Used fallback click position as upgrade button was not found.", "Image Recognition Warning")
         }
-        return false
     }
+    
+    ; Try to click the icon again to close the upgrade dialog
+    LogAction("Clicking icon again at position: " . iconX . ", " . iconY)
+    MouseClick("left", iconX, iconY)
+    LogAction("Completed processing icon")
+    return true
 }
 
 ; -----------------------------------------------------------------------------
@@ -794,8 +922,10 @@ ExitFunc(ExitReason := "", ExitCode := "") {
     LogAction("Script terminated and resources cleaned up")
 }
 
-; Include the GDI+ library
+
+; ===== INCLUDES =====
 #Include Gdip_All.ahk
+#Include ShinsImageScanClass.ahk
 
 ; ===== CONFIGURATION =====
 global appPath := "E:\SteamLibrary\steamapps\common\Legends of Idleon\LegendsOfIdleon.exe"
@@ -803,6 +933,7 @@ global buttonImageFile := "upgrade_button.png"
 global windowWidth := 1440
 global windowHeight := 840
 global configFile := A_ScriptDir . "\IdleonPositions.ini"
+global configIniFile := A_ScriptDir . "\Config.ini"
 
 ; ===== GLOBAL VARIABLES =====
 global isPositionFinderActive := false
@@ -820,7 +951,7 @@ global waitTimeBetweenCycles := 5  ; in minutes
 global currentIconIndex := 1
 global currentRepetition := 1
 global scriptVersion := "1.0.0"  ; Current version of your script
-global githubRepo := "YourUsername/YourRepoName"  ; Your GitHub repo
+global githubRepo := "neswartz/IdleOn"  ; Your GitHub repo
 global updateCheckIntervalDays := 1  
 
 ; ===== INITIALIZATION =====
@@ -848,6 +979,9 @@ if (!pToken) {
 }
 OnExit(ExitFunc)  ; Using function object directly
 LoadPositionsFromFile()
+LoadConfigSettings()
+
+CheckForUpdates(false)  ; Initial check, 'false' means don't force update check if already checked today
 
 ; Launch the GUI automatically when script starts
 StartBatchProcessing()
@@ -887,11 +1021,16 @@ XButton2::  ; Mouse5 to capture current position
 ^+s::  ; Save positions hotkey
 {
     SavePositionsToFile()
-    MsgBox("Positions saved to file: " . configFile)
+    SaveConfigSettings()
+    MsgBox("Positions saved to file: " . configFile . "`nConfig settings saved to file: " . configIniFile)
 }
 
-; Add new hotkey for recapturing the upgrade button
-^+u::BackupAndCaptureUpgradeButton()
+; -----------------------------------------------------------------------------
+; Add this hotkey for manual update checking
+^+u::  ; This would replace your current Ctrl+Shift+U hotkey
+{
+    ;CheckForUpdates(true)  ; Force check
+}
 
 ^+x::  ; Stop batch processing and exit script
 {
@@ -960,7 +1099,7 @@ BatchStart(ctrl, *) {
     lastIconSequence := saved.IconSequenceInput
     lastRepetitionCount := saved.RepetitionCountInput
     lastWaitTimeBetweenCycles := saved.WaitTimeInput
-    SavePositionsToFile()  ; Save to config file
+    SaveConfigSettings() ; Save to config file
     
     repetitionCount := saved.RepetitionCountInput
     waitTimeBetweenCycles := saved.WaitTimeInput
@@ -1133,82 +1272,217 @@ StopBatchProcessing() {
     }
 }
 
+
 ; -----------------------------------------------------------------------------
-; Finds an image on screen using multiple tolerance values
-; Returns true if found, and sets the position variables
-; Parameters:
-;   imagePath - path to the image file
-;   &imageX, &imageY - variables to store the found coordinates
-;   &width, &height - variables to store the image dimensions (optional)
-;   searchRegion - search coordinates in format "x|y|w|h" (optional, defaults to entire window)
-;   toleranceValues - array of tolerance values to try (optional)
-;   saveDebugScreenshot - whether to save a debug screenshot if not found (optional)
-;   debugPrefix - prefix for debug screenshot filename (optional)
-FindImageOnScreen(imagePath, &imageX, &imageY, &width := 0, &height := 0, searchRegion := "", toleranceValues := [40, 80, 120, 150], saveDebugScreenshot := false, debugPrefix := "debug") {
-    Local WinX, WinY, WinW, WinH, searchX, searchY, searchW, searchH, currentTolerance, debugScreenshot
+; Helper function to verify an image match at a specific location
+VerifyImageMatch(imagePath, foundX, foundY, searchRegion := "", tolerance := 40) {
+    Local verifyX, verifyY
     
+    try {
+        if ImageSearch(&verifyX, &verifyY, foundX - 5, foundY - 5, foundX + 5, foundY + 5, "*" . tolerance . " " . imagePath) {
+            return true
+        }
+    } catch {
+        ; If verification fails, return false
+        return false
+    }
+    
+    return false
+}
+
+; This function replaces the TryGdipImageSearch function that was causing issues
+; It uses ShinsImageScanClass for more reliable image detection
+
+FindImageOnScreen(imagePath, &imageX, &imageY, &width := 0, &height := 0, searchRegion := "", 
+                  toleranceValues := [20, 40, 60, 80, 100, 120, 150], 
+                  saveDebugScreenshot := false, debugPrefix := "debug", matchThreshold := 70) {
+    
+    ; Initialize the scanner for the entire desktop
+    static scanner := ""
+    if (scanner = "") {
+        scanner := ShinsImageScanClass()
+    }
+    
+    ; Check if image file exists
     if (!FileExist(imagePath)) {
         LogAction("Image file not found: " . imagePath)
         return false
     }
     
-    ; Get window dimensions if search region not specified
-    if (searchRegion == "") {
-        WinGetPos(&WinX, &WinY, &WinW, &WinH, "ahk_exe LegendsOfIdleon.exe")
-        searchX := 0
-        searchY := 0
-        searchW := WinW
-        searchH := WinH
-    } else {
+    ; Get image dimensions if requested
+    if (&width != 0 && &height != 0) {
+        scanner.GetImageDimensions(imagePath, &width, &height)
+    }
+    
+    LogAction("Searching for image: " . imagePath)
+    
+    ; Parse search region if provided
+    if (searchRegion != "") {
         searchParams := StrSplit(searchRegion, "|")
         if (searchParams.Length >= 4) {
             searchX := searchParams[1]
             searchY := searchParams[2]
             searchW := searchParams[3]
             searchH := searchParams[4]
+            
+            ; Try with different tolerance values
+            for _, variance in toleranceValues {
+                LogAction("Trying image search with variance: " . variance)
+                if (scanner.ImageRegion(imagePath, searchX, searchY, searchW, searchH, variance, &imageX, &imageY, 0)) {
+                    LogAction("Found image with variance " . variance . " at " . imageX . ", " . imageY)
+                    return true
+                }
+            }
         } else {
-            WinGetPos(&WinX, &WinY, &WinW, &WinH, "ahk_exe LegendsOfIdleon.exe")
-            searchX := 0
-            searchY := 0
-            searchW := WinW
-            searchH := WinH
+            ; If region format is incorrect, fall back to full screen search
+            for _, variance in toleranceValues {
+                LogAction("Trying full screen image search with variance: " . variance)
+                if (scanner.Image(imagePath, variance, &imageX, &imageY, 0)) {
+                    LogAction("Found image with variance " . variance . " at " . imageX . ", " . imageY)
+                    return true
+                }
+            }
         }
-    }
-    
-    ; Get image dimensions if requested
-    if (&width != 0 && &height != 0) {
-        if (!ImageGetSize(imagePath, &width, &height)) {
-            width := 100  ; Default fallback values
-            height := 30
-            LogAction("Warning: Could not get image dimensions for " . imagePath . ", using defaults")
-        }
-    }
-    
-    LogAction("Searching for image: " . imagePath)
-    
-    ; Try multiple tolerance values
-    for i, currentTolerance in toleranceValues {
-        LogAction("Trying image search with tolerance: " . currentTolerance)
-        
-        try {
-            if ImageSearch(&imageX, &imageY, searchX, searchY, searchX + searchW, searchY + searchH, "*" . currentTolerance . " " . imagePath) {
-                LogAction("Found image with tolerance " . currentTolerance . " at " . imageX . ", " . imageY)
+    } else {
+        ; Full screen search
+        for _, variance in toleranceValues {
+            LogAction("Trying full screen image search with variance: " . variance)
+            if (scanner.Image(imagePath, variance, &imageX, &imageY, 0)) {
+                LogAction("Found image with variance " . variance . " at " . imageX . ", " . imageY)
                 return true
             }
-        } catch {
-            LogAction("Error during image search with tolerance " . currentTolerance)
         }
-        
-        ; Add a small delay between attempts
-        Sleep(200)
     }
     
     ; If image not found and debug screenshot requested
     if (saveDebugScreenshot) {
         debugScreenshot := A_ScriptDir . "\" . debugPrefix . "_screenshot_" . FormatTime(, "yyyyMMdd_HHmmss") . ".png"
-        SaveScreenshot(debugScreenshot)
+        scanner.SaveImage(debugScreenshot)
         LogAction("Image not found. Debug screenshot saved to: " . debugScreenshot)
+        
+        ; Save the template image with suffix for comparison
+        FileCopy(imagePath, A_ScriptDir . "\" . debugPrefix . "_template_" . FormatTime(, "yyyyMMdd_HHmmss") . ".png", 1)
     }
     
     return false
 }
+
+
+; -----------------------------------------------------------------------------
+; Check for script updates from GitHub repository
+CheckForUpdates(forceCheck := false) {
+    global scriptVersion, githubRepo, updateCheckIntervalDays
+    static lastChecked := 0
+    
+    ; Skip check if already checked today (unless forced)
+    if (!forceCheck) {
+        currentDay := FormatTime(, "yyyyMMdd")
+        if (lastChecked == currentDay) {
+            LogAction("Already checked for updates today.")
+            return false
+        }
+    }
+    
+    ; Update last checked date
+    lastChecked := FormatTime(, "yyyyMMdd")
+    LogAction("Checking for updates from GitHub...")
+    
+    try {
+        ; Create WinHttpRequest object
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        
+        ; Get the latest version info from GitHub
+        versionUrl := "https://raw.githubusercontent.com/" . githubRepo . "/main/version.txt"
+        http.Open("GET", versionUrl, true)
+        http.Send()
+        http.WaitForResponse()
+        
+        if (http.Status == 200) {
+            latestVersion := Trim(http.ResponseText)
+            LogAction("Current version: " . scriptVersion . ", Latest version: " . latestVersion)
+            
+            ; Compare versions (simple string comparison - you might want to implement semantic versioning)
+            if (latestVersion > scriptVersion) {
+                result := MsgBox("A new version is available: " . latestVersion . "`nWould you like to update now?", "Update Available", "YesNo")
+                if (result == "Yes") {
+                    ;return DownloadUpdate()
+                }
+            } else {
+                LogAction("Script is up to date.")
+            }
+        } else {
+            LogAction("Failed to check for updates. Status: " . http.Status)
+        }
+    } catch as e {
+        LogAction("Error checking for updates: " . e.Message)
+    }
+    
+    return false
+}
+
+; -----------------------------------------------------------------------------
+; Download and install the update
+/*
+DownloadUpdate() {
+    global githubRepo
+    
+    try {
+        ; Prepare backup of current script
+        scriptPath := A_ScriptFullPath
+        backupPath := A_ScriptDir . "\backup_" . FormatTime(, "yyyyMMdd_HHmmss") . ".ahk"
+        
+        ; Create backup
+        FileCopy(scriptPath, backupPath, 1)
+        LogAction("Created backup at: " . backupPath)
+        
+        ; Download new version
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        scriptUrl := "https://raw.githubusercontent.com/" . githubRepo . "/main/" . A_ScriptName
+        
+        LogAction("Downloading update from: " . scriptUrl)
+        http.Open("GET", scriptUrl, true)
+        http.Send()
+        http.WaitForResponse()
+        
+        if (http.Status == 200) {
+            ; Write new version to temporary file
+            tempFile := A_ScriptDir . "\update_temp.ahk"
+            FileDelete(tempFile)
+            FileAppend(http.ResponseText, tempFile)
+            
+            ; Prepare update batch script that will:
+            ; 1. Wait for current script to exit
+            ; 2. Replace the script file
+            ; 3. Start the new version
+            updateBatch := A_ScriptDir . "\update.bat"
+            
+            batchScript := "@echo off`r`n"
+            batchScript .= "echo Updating... Please wait`r`n"
+            batchScript .= "timeout /t 2 /nobreak > nul`r`n"  ; Wait for script to exit
+            batchScript .= "copy /Y """ . tempFile . """ """ . scriptPath . """`r`n"
+            batchScript .= "del """ . tempFile . """`r`n"
+            batchScript .= "start """" """ . scriptPath . """`r`n"
+            batchScript .= "del ""%~f0""`r`n"  ; Self-delete the batch file
+            
+            FileDelete(updateBatch)
+            FileAppend(batchScript, updateBatch)
+            
+            ; Alert user and restart
+            MsgBox("Update downloaded. The script will restart to apply updates.", "Update Ready")
+            
+            ; Run update batch and exit
+            Run(updateBatch)
+            ExitApp()
+            return true
+        } else {
+            LogAction("Failed to download update. Status: " . http.Status)
+            MsgBox("Failed to download update. HTTP status: " . http.Status, "Update Failed")
+        }
+    } catch as e {
+        LogAction("Error during update: " . e.Message)
+        MsgBox("Update failed: " . e.Message, "Update Error")
+    }
+    
+    return false
+}
+*/
